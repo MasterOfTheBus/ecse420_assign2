@@ -5,6 +5,8 @@
 void get_rows_cols(char *filename, int* cols_rows);
 double** allocate_matrix(int rowss, int columns);
 void fill_matrix_portion(char *filename, double **matrix, int start_row, int end_row, int columns);
+void print_matrix(double** matrix, int rows, int columns, int rank, int size);
+void free_matrix(double** matrix, int rows);
 
 int main(int argc, char* argv[]) {
 
@@ -38,6 +40,10 @@ int main(int argc, char* argv[]) {
 
   matrix = allocate_matrix(end_row - start_row, columns);
   fill_matrix_portion(argv[1], matrix, start_row, end_row, columns);
+
+  print_matrix(matrix, end_row - start_row, columns, rank, size);
+
+  free_matrix(matrix, end_row - start_row);
 
   MPI_Finalize();
 
@@ -108,4 +114,29 @@ void fill_matrix_portion(char *filename, double **matrix, int start_row, int end
   fclose(file);
 
   return;
+}
+
+void print_matrix(double** matrix, int rows, int columns, int rank, int size) {
+  MPI_Status status;
+  int temp = 0;
+  if (rank != 0) {
+    MPI_Recv(&temp, 1, MPI_INT, rank - 1, rank - 1, MPI_COMM_WORLD, &status);
+  }
+  int i;
+  for (i = 0; i < rows; i++) {
+    int j;
+    for (j = 0; j < columns; j++) {
+      printf("%lf ", matrix[i][j]);
+    }
+    printf("\n");
+  }
+  if (rank != size - 1) {
+    MPI_Send(&temp, 1, MPI_INT, rank + 1, rank, MPI_COMM_WORLD);
+  }
+}
+
+void free_matrix(double** matrix, int rows) {
+  int i;
+  for (i = 0; i < rows; i++) free(matrix[i]);
+  free(matrix);
 }
