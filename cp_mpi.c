@@ -3,8 +3,11 @@
 #include <mpi.h>
 
 void get_rows_cols(char *filename, int* cols_rows);
-double** allocate_matrix(int rowss, int columns);
+double** allocate_matrix(int rows, int columns);
+void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row);
 void fill_matrix_portion(char *filename, double **matrix, int start_row, int end_row, int columns);
+void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row_start, int src_row_end,
+			  int dest_row_start, int dest_row_end, int columns);
 void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size);
 void print_matrix(double** matrix, int rows, int columns, int rank, int size);
 void free_matrix(double** matrix, int rows);
@@ -18,6 +21,7 @@ int main(int argc, char* argv[]) {
 
   int size, rank;
   int columns, rows;
+  int start_row, end_row;
   double **matrix; 
   MPI_Init(&argc, &argv);
   MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -35,9 +39,7 @@ int main(int argc, char* argv[]) {
   MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
   // determine the portion of the matrix to take
-  int start_row = rows / size * rank;
-  int end_row = rows / size * (rank + 1); 
-  if (rank == size - 1) end_row += rows % size;
+  get_start_end_for_rank(rank, size, rows, &start_row, &end_row);
 
   matrix = allocate_matrix(end_row - start_row, columns);
   fill_matrix_portion(argv[1], matrix, start_row, end_row, columns);
@@ -97,6 +99,12 @@ double ** allocate_matrix(int rows, int cols)
   return matrix;
 }
 
+void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row) {
+  *start_row = rows / size * rank;
+  *end_row = rows / size * (rank + 1); 
+  if (rank == size - 1) *end_row += rows % size;
+}
+
 void fill_matrix_portion(char *filename, double **matrix, int start_row, int end_row, int columns) {
   FILE *file;
   file = fopen(filename, "r");
@@ -128,7 +136,7 @@ void fill_matrix_portion(char *filename, double **matrix, int start_row, int end
     The strategy is to use a broadcast to inform the other processes of the rows
 */
 void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size) {
-    int src_row, dest_row, row, row2, column;
+    /*int src_row, dest_row, row, column, i;
     double pivot;
     for (src_row = start_row; src_row < end_row; src_row++) {
       for (dest_row = start_row; dest_row < end_row; dest_row++) {
@@ -139,7 +147,50 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
 	  matrix[dest_row-start_row][column] = matrix[dest_row-start_row][column] - pivot * matrix[src_row-start_row][column];
 	}
       }
+    }*/
+
+  gaussian_elimination(matrix, matrix, start_row, end_row, start_row, end_row, columns);
+
+  // broadcast rows to send to other processes
+  int i;
+  for (i = 0; i < size; i++) {
+    int start_i, end_i;
+    get_start_end_for_rank(i, size, rows, &start_i, &end_i);
+    double **matrix_portion = allocate_matrix(end_i - start_i, columns);
+    int matrix_size = (end_i - start_i) * columns;
+    if (rank == i) {
+      // copy in the matrix portion
+      int index;
+      for (index = 0; index < end_i - start_i; index++) {
+        matrix_portion[index] = matrix[index];
+      }
     }
+  //  MPI_Bcast(&matrix_portion, matrix_size, MPI_DOUBLE, i, MPI_COMM_WORLD);
+
+  //  gaussian_elimination(matrix_portion, matrix, start_i, end_i, start_row, end_row, columns);
+
+    matrix_portion = NULL;
+
+    // double frees. how can i free the allocated matrix then? or will it clean up by going out of scope?
+    //free_matrix(matrix_portion, end_i - start_i);
+  }
+
+}
+
+void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row_start, int src_row_end,
+			  int dest_row_start, int dest_row_end, int columns) {
+  int src_row, dest_row, column;
+  double pivot;
+  for (src_row = src_row_start; src_row < src_row_end; src_row++) {
+    for (dest_row = dest_row_start; dest_row < dest_row_end; dest_row++) {
+      if (src_matrix == dest_matrix && dest_row == src_row) continue;
+
+      pivot = dest_matrix[dest_row - dest_row_start][src_row] / src_matrix[src_row - src_row_start][src_row];
+      for (column = src_row; column < columns; column++) {
+        dest_matrix[dest_row - dest_row_start][column] = dest_matrix[dest_row - dest_row_start][column] - pivot * src_matrix[src_row - src_row_start][column];
+      }
+    }
+  }
 }
 
 void print_matrix(double** matrix, int rows, int columns, int rank, int size) {
