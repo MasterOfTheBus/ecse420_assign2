@@ -5,6 +5,7 @@
 void get_rows_cols(char *filename, int* cols_rows);
 double** allocate_matrix(int rowss, int columns);
 void fill_matrix_portion(char *filename, double **matrix, int start_row, int end_row, int columns);
+void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size);
 void print_matrix(double** matrix, int rows, int columns, int rank, int size);
 void free_matrix(double** matrix, int rows);
 
@@ -41,6 +42,13 @@ int main(int argc, char* argv[]) {
   matrix = allocate_matrix(end_row - start_row, columns);
   fill_matrix_portion(argv[1], matrix, start_row, end_row, columns);
 
+  print_matrix(matrix, end_row - start_row, columns, rank, size);
+
+  RREF(matrix, start_row, end_row, rows, columns, rank, size);
+
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  if (rank == 0) printf("\n\n");
   print_matrix(matrix, end_row - start_row, columns, rank, size);
 
   free_matrix(matrix, end_row - start_row);
@@ -114,6 +122,24 @@ void fill_matrix_portion(char *filename, double **matrix, int start_row, int end
   fclose(file);
 
   return;
+}
+
+/*
+    The strategy is to use a broadcast to inform the other processes of the rows
+*/
+void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size) {
+    int src_row, dest_row, row, row2, column;
+    double pivot;
+    for (src_row = start_row; src_row < end_row; src_row++) {
+      for (dest_row = start_row; dest_row < end_row; dest_row++) {
+	if (dest_row == src_row) continue;
+
+	pivot = matrix[dest_row-start_row][src_row] / matrix[src_row-start_row][src_row];
+	for (column = src_row; column < columns; column++) {
+	  matrix[dest_row-start_row][column] = matrix[dest_row-start_row][column] - pivot * matrix[src_row-start_row][column];
+	}
+      }
+    }
 }
 
 void print_matrix(double** matrix, int rows, int columns, int rank, int size) {
