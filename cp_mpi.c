@@ -169,7 +169,7 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
       }
     }*/
 
-  gaussian_elimination(matrix, matrix, start_row, end_row, start_row, end_row, columns);
+  //gaussian_elimination(matrix, matrix, start_row, end_row, start_row, end_row, columns);
 
 //printf("rank %d with %d ranks\n", rank, size);
 
@@ -187,21 +187,21 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
     if (rank == i) {
       // copy in the matrix portion
       int index;
-      printf("\n\nassigning the values\n");
+      //printf("\n\nassigning the values\n");
       for (index = 0; index < end_i - start_i; index++) {
         int j;
 	for (j = 0; j < columns; j++) {
           matrix_portion[index][j] = matrix[index][j];
-	  printf("%lf ", matrix_portion[index][j]);
+	  //printf("%lf ", matrix_portion[index][j]);
 	}
-	printf("\n");
+	//printf("\n");
       }
-      printf("\n\n");
+      //printf("\n\n");
     }
 
     MPI_Bcast(&(matrix_portion[0][0]), end_i - start_i, MPI_DOUBLE, i, MPI_COMM_WORLD);
 
-    if (rank != i)
+   // if (rank != i)
       gaussian_elimination(matrix_portion, matrix, start_i, end_i, start_row, end_row, columns);
 
     free_contiguous_2d_double(matrix_portion);
@@ -217,17 +217,23 @@ void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row
     for (dest_row = dest_row_start; dest_row < dest_row_end; dest_row++) {
       if (src_matrix == dest_matrix && dest_row == src_row) continue;
 
+//    printf("src %d, dest %d\n", src_row, dest_row);
+
       double numerator = dest_matrix[dest_row - dest_row_start][src_row];
       double denominator = src_matrix[src_row - src_row_start][src_row];
-      if (numerator == 0 || denominator == 0) continue;
+ 
+      // check that numerator and denominator != 0, but need to have a delta for floats
+      if (((numerator <= 0.0000001) && (numerator >= -0.0000001)) ||
+	  ((denominator <= 0.0000001) && (denominator >= -0.0000001)))
+	  continue;
       
       pivot = numerator / denominator;
-      printf("%lf / %lf = %lf\n", numerator, denominator, pivot);
+      //printf("%lf / %lf = %lf\n", numerator, denominator, pivot);
       for (column = src_row; column < columns; column++) {
         dest_matrix[dest_row - dest_row_start][column] = dest_matrix[dest_row - dest_row_start][column] - pivot * src_matrix[src_row - src_row_start][column];
-	printf("%lf ", dest_matrix[dest_row - dest_row_start][column]);
+	//printf("%lf ", dest_matrix[dest_row - dest_row_start][column]);
       }
-      printf("\n");
+      //printf("\n");
     }
   }
 }
