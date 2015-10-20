@@ -1,4 +1,4 @@
 cp_mpi
 *.sh
-cp_sequential.c
+cp_sequential*
 *.txt

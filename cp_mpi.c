@@ -48,11 +48,13 @@ int main(int argc, char* argv[]) {
 
   print_matrix(matrix, end_row - start_row, columns, rank, size);
 
+  MPI_Barrier(MPI_COMM_WORLD);
+
   RREF(matrix, start_row, end_row, rows, columns, rank, size);
 
   MPI_Barrier(MPI_COMM_WORLD);
 
-  if (rank == 0) printf("\n\n");
+  if (rank == 0) printf("\n\nprinting after reducing\n");
   print_matrix(matrix, end_row - start_row, columns, rank, size);
 
   free_matrix(matrix, end_row - start_row);
@@ -156,22 +158,7 @@ void free_contiguous_2d_double(double** matrix) {
     The strategy is to use a broadcast to inform the other processes of the rows
 */
 void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size) {
-    /*int src_row, dest_row, row, column, i;
-    double pivot;
-    for (src_row = start_row; src_row < end_row; src_row++) {
-      for (dest_row = start_row; dest_row < end_row; dest_row++) {
-	if (dest_row == src_row) continue;
-
-	pivot = matrix[dest_row-start_row][src_row] / matrix[src_row-start_row][src_row];
-	for (column = src_row; column < columns; column++) {
-	  matrix[dest_row-start_row][column] = matrix[dest_row-start_row][column] - pivot * matrix[src_row-start_row][column];
-	}
-      }
-    }*/
-
   //gaussian_elimination(matrix, matrix, start_row, end_row, start_row, end_row, columns);
-
-//printf("rank %d with %d ranks\n", rank, size);
 
   // broadcast rows to send to other processes
   int i;
@@ -182,27 +169,27 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
     get_start_end_for_rank(i, size, rows, &start_i, &end_i);
     //printf("%d, %d, for %d and size %d\n", start_i, end_i, i, size);
     double **matrix_portion = allocate_contiguous_2d_double(end_i - start_i, columns);
-    //printf("allocated for rank %d from rank %d\n", i, rank);
     int matrix_size = (end_i - start_i) * columns;
     if (rank == i) {
       // copy in the matrix portion
       int index;
-      //printf("\n\nassigning the values\n");
       for (index = 0; index < end_i - start_i; index++) {
         int j;
 	for (j = 0; j < columns; j++) {
           matrix_portion[index][j] = matrix[index][j];
-	  //printf("%lf ", matrix_portion[index][j]);
 	}
-	//printf("\n");
       }
-      //printf("\n\n");
     }
 
     MPI_Bcast(&(matrix_portion[0][0]), end_i - start_i, MPI_DOUBLE, i, MPI_COMM_WORLD);
 
    // if (rank != i)
       gaussian_elimination(matrix_portion, matrix, start_i, end_i, start_row, end_row, columns);
+
+    if (rank == 0) printf("\n\nprinting for iteration %d\n", i);
+    MPI_Barrier(MPI_COMM_WORLD);
+    print_matrix(matrix, end_row - start_row, columns, rank, size);
+    MPI_Barrier(MPI_COMM_WORLD);
 
     free_contiguous_2d_double(matrix_portion);
   }
@@ -215,9 +202,9 @@ void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row
   double pivot;
   for (src_row = src_row_start; src_row < src_row_end; src_row++) {
     for (dest_row = dest_row_start; dest_row < dest_row_end; dest_row++) {
-      if (src_matrix == dest_matrix && dest_row == src_row) continue;
+      if (dest_row == src_row) continue;
 
-//    printf("src %d, dest %d\n", src_row, dest_row);
+    printf("src %d, dest %d\n", src_row, dest_row);
 
       double numerator = dest_matrix[dest_row - dest_row_start][src_row];
       double denominator = src_matrix[src_row - src_row_start][src_row];
@@ -228,12 +215,11 @@ void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row
 	  continue;
       
       pivot = numerator / denominator;
-      //printf("%lf / %lf = %lf\n", numerator, denominator, pivot);
+      
       for (column = src_row; column < columns; column++) {
+      printf("substracting (%d, %d) from (%d, %d)\n", src_row, column, dest_row, column);
         dest_matrix[dest_row - dest_row_start][column] = dest_matrix[dest_row - dest_row_start][column] - pivot * src_matrix[src_row - src_row_start][column];
-	//printf("%lf ", dest_matrix[dest_row - dest_row_start][column]);
       }
-      //printf("\n");
     }
   }
 }
