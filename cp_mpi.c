@@ -55,26 +55,18 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  for (i = 0; i < size; i++) {
-    printf("%d ", scatter_array[i]);
-  }
-  printf("\n");
-
   // for each row, broadcast it, then scatter the rest of the matrix
   double** reduce_rows = allocate_contiguous_2d_double(end_row - start_row, columns);
   //double reduce_rows[(end_row - start_row) * columns];
 
-  for (i = 0; i < /*rows*/1; i++) {
+  for (i = 0; i < rows; i++) {
     int j;
     double bcast_row[columns];
-    double** gather_recv;
-
+    //    double** gather_recv = allocate_contiguous_2d_double(rows, columns);
     if (rank == 0) {
       for (j = 0; j < columns; j++) {
         bcast_row[j] = matrix[i][j];
       }
-
-      gather_recv = allocate_contiguous_2d_double(rows, columns);
     }
     MPI_Bcast(&bcast_row, columns, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
@@ -86,21 +78,23 @@ int main(int argc, char* argv[]) {
     printf("\n");*/
 
     MPI_Scatterv(&(matrix[0][0]), scatter_array, displ_array, MPI_DOUBLE,
-                 &(reduce_rows[0][0]), scatter_array[i], MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                 &(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, 0,
+                 MPI_COMM_WORLD);
 
     print_matrix(reduce_rows, end_row - start_row, columns);
+
   //RREF(matrix, start_row, end_row, rows, columns, rank, size);
 
-    //MPI_Gatherv(&(reduce_rows[0][0]), scatter_array[i], MPI_DOUBLE, &(gather_recv[0][0]),
-    // scatter_array, scatter_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Gatherv(&(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, &(matrix[0][0]),
+                scatter_array, displ_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    if (rank == 0) free_contiguous_2d_double(gather_recv);
+    //    free_contiguous_2d_double(gather_recv);
   }
 
-  /*if (rank == 0) {
+  if (rank == 0) {
     printf("\n");
     print_matrix(matrix, rows, columns);
-    }*/
+  }
 
   free_contiguous_2d_double(reduce_rows);
 
