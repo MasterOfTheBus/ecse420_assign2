@@ -2,17 +2,14 @@
 #include <stdlib.h>
 #include <mpi.h>
 
-void get_rows_cols(char *filename, int* cols_rows);
-double** allocate_matrix(int rows, int columns);
 void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row);
-void fill_matrix_portion(char *filename, double **matrix, int start_row, int end_row, int columns);
 double** allocate_contiguous_2d_double(int rows, int columns);
 void free_contiguous_2d_double(double** array);
 void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row_start, int src_row_end,
 			  int dest_row_start, int dest_row_end, int columns);
 void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size);
-void print_matrix(double** matrix, int rows, int columns, int rank, int size);
-void free_matrix(double** matrix, int rows);
+void print_matrix(double** matrix, int rows, int columns);
+double** read_user_matrix_from_file(char* filename, int* rows, int* columns);
 
 int main(int argc, char* argv[]) {
 
@@ -30,34 +27,26 @@ int main(int argc, char* argv[]) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   if (rank == 0) {
-    int cols_rows[2];
-    get_rows_cols(argv[1], cols_rows);
-    columns = cols_rows[0];
-    rows = cols_rows[1];
+    matrix = read_user_matrix_from_file(argv[1], &rows, &columns);
   }
 
   // broadcast the column and row info
   MPI_Bcast(&columns, 1, MPI_INT, 0, MPI_COMM_WORLD);
-  MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
+//  MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
   // determine the portion of the matrix to take
   get_start_end_for_rank(rank, size, rows, &start_row, &end_row);
 
-  matrix = allocate_matrix(end_row - start_row, columns);
-  fill_matrix_portion(argv[1], matrix, start_row, end_row, columns);
+//  matrix = allocate_matrix(end_row - start_row, columns);
+//  fill_matrix_portion(argv[1], matrix, start_row, end_row, columns);
 
-  print_matrix(matrix, end_row - start_row, columns, rank, size);
+  //RREF(matrix, start_row, end_row, rows, columns, rank, size);
 
-  MPI_Barrier(MPI_COMM_WORLD);
+  if (rank == 0)
+    print_matrix(matrix, rows, columns);
 
-  RREF(matrix, start_row, end_row, rows, columns, rank, size);
-
-  MPI_Barrier(MPI_COMM_WORLD);
-
-  if (rank == 0) printf("\n\nprinting after reducing\n");
-  print_matrix(matrix, end_row - start_row, columns, rank, size);
-
-  free_matrix(matrix, end_row - start_row);
+  if (rank == 0)
+    free_contiguous_2d_double(matrix);
 
   MPI_Finalize();
 
@@ -91,49 +80,10 @@ void get_rows_cols(char *filename, int* cols_rows) {
     return;
 }
 
-double ** allocate_matrix(int rows, int cols)
-{
-  int i = 0;
-  double ** matrix = (double **) malloc(rows * sizeof(double *));
-
-  for (i = 0; i < rows; i++) {
-    matrix[i] = (double *) malloc(cols * sizeof(double));
-  }
-
-  return matrix;
-}
-
 void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row) {
   *start_row = rows / size * rank;
   *end_row = rows / size * (rank + 1); 
   if (rank == size - 1) *end_row += rows % size;
-}
-
-void fill_matrix_portion(char *filename, double **matrix, int start_row, int end_row, int columns) {
-  FILE *file;
-  file = fopen(filename, "r");
-
-  // position the file pointer first to the right row
-  int i = 0;
-  char c;
-  while (i != start_row) {
-    c = fgetc(file);
-    if (c == '\n') i++;
-  }
-
-  // read in the data
-  i = 0;
-  int rows = end_row - start_row;
-  for (; i < rows; i++) {
-    int j = 0;
-    for (; j < columns; j++) {
-      fscanf(file, "%lf", &matrix[i][j]);
-    }
-  }
-
-  fclose(file);
-
-  return;
 }
 
 // passing multidimensional arrays through mpi requires the data to be contiguous
@@ -188,7 +138,7 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
 
     if (rank == 0) printf("\n\nprinting for iteration %d\n", i);
     MPI_Barrier(MPI_COMM_WORLD);
-    print_matrix(matrix, end_row - start_row, columns, rank, size);
+    print_matrix(matrix, end_row - start_row, columns);
     MPI_Barrier(MPI_COMM_WORLD);
 
     free_contiguous_2d_double(matrix_portion);
@@ -224,12 +174,7 @@ void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row
   }
 }
 
-void print_matrix(double** matrix, int rows, int columns, int rank, int size) {
-  MPI_Status status;
-  int temp = 0;
-  if (rank != 0) {
-    MPI_Recv(&temp, 1, MPI_INT, rank - 1, rank - 1, MPI_COMM_WORLD, &status);
-  }
+void print_matrix(double** matrix, int rows, int columns) {
   int i;
   for (i = 0; i < rows; i++) {
     int j;
@@ -238,13 +183,39 @@ void print_matrix(double** matrix, int rows, int columns, int rank, int size) {
     }
     printf("\n");
   }
-  if (rank != size - 1) {
-    MPI_Send(&temp, 1, MPI_INT, rank + 1, rank, MPI_COMM_WORLD);
-  }
 }
 
-void free_matrix(double** matrix, int rows) {
-  int i;
-  for (i = 0; i < rows; i++) free(matrix[i]);
-  free(matrix);
+double ** read_user_matrix_from_file(char *filename, int *rows, int *columns) {
+  FILE *file;
+  file = fopen(filename, "r");
+
+  /* get number of rows and columns*/
+  *rows = 1;
+  *columns = 1;
+  char c;
+  int columns_known = 0;
+  while(!feof(file)) {
+    c = fgetc(file);
+    if (c == ' ') {
+      if (!columns_known) (*columns)++;
+    } 
+
+    if (c == '\n') {
+      (*rows)++;
+      columns_known = 1;
+      continue;
+    }
+  }
+
+  /* read values into array */
+  rewind(file);
+  int i, j;
+  double **matrix = allocate_contiguous_2d_double(*rows, *columns); // MPI passes assuming contiguous data
+  for (i = 0; i < *rows; i++) {
+    for (j = 0; j < *columns; j++) {
+    fscanf(file,"%lf",&matrix[i][j]);
+    }
+  } 
+  fclose(file);
+  return matrix;
 }
