@@ -1,0 +1,4 @@
+cp_mpi
+*.sh
+cp_sequential.c
+*.txt
