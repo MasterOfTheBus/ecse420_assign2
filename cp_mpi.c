@@ -6,6 +6,8 @@ void get_rows_cols(char *filename, int* cols_rows);
 double** allocate_matrix(int rows, int columns);
 void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row);
 void fill_matrix_portion(char *filename, double **matrix, int start_row, int end_row, int columns);
+double** allocate_contiguous_2d_double(int rows, int columns);
+void free_contiguous_2d_double(double** array);
 void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row_start, int src_row_end,
 			  int dest_row_start, int dest_row_end, int columns);
 void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size);
@@ -132,6 +134,24 @@ void fill_matrix_portion(char *filename, double **matrix, int start_row, int end
   return;
 }
 
+// passing multidimensional arrays through mpi requires the data to be contiguous
+double** allocate_contiguous_2d_double(int rows, int columns) {
+  double *data = (double*)malloc(rows * columns * sizeof(double));
+  if (!data) printf("failed to malloc\n");
+  double **array = (double**)malloc(rows * sizeof(double*));
+  if (!array) printf("failed to malloc\n");
+  int i;
+  for (i = 0; i < rows; i++)
+    array[i] = &(data[columns * i]);
+
+  return array;
+}
+
+void free_contiguous_2d_double(double** matrix) {
+  free(&(matrix[0][0]));
+  free(matrix);
+}
+
 /*
     The strategy is to use a broadcast to inform the other processes of the rows
 */
@@ -151,28 +171,40 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
 
   gaussian_elimination(matrix, matrix, start_row, end_row, start_row, end_row, columns);
 
+//printf("rank %d with %d ranks\n", rank, size);
+
   // broadcast rows to send to other processes
   int i;
   for (i = 0; i < size; i++) {
+//printf("iteration %d of %d\n", i, size);
+
     int start_i, end_i;
     get_start_end_for_rank(i, size, rows, &start_i, &end_i);
-    double **matrix_portion = allocate_matrix(end_i - start_i, columns);
+    //printf("%d, %d, for %d and size %d\n", start_i, end_i, i, size);
+    double **matrix_portion = allocate_contiguous_2d_double(end_i - start_i, columns);
+    //printf("allocated for rank %d from rank %d\n", i, rank);
     int matrix_size = (end_i - start_i) * columns;
     if (rank == i) {
       // copy in the matrix portion
       int index;
+      printf("\n\nassigning the values\n");
       for (index = 0; index < end_i - start_i; index++) {
-        matrix_portion[index] = matrix[index];
+        int j;
+	for (j = 0; j < columns; j++) {
+          matrix_portion[index][j] = matrix[index][j];
+	  printf("%lf ", matrix_portion[index][j]);
+	}
+	printf("\n");
       }
+      printf("\n\n");
     }
-  //  MPI_Bcast(&matrix_portion, matrix_size, MPI_DOUBLE, i, MPI_COMM_WORLD);
 
-  //  gaussian_elimination(matrix_portion, matrix, start_i, end_i, start_row, end_row, columns);
+    MPI_Bcast(&(matrix_portion[0][0]), end_i - start_i, MPI_DOUBLE, i, MPI_COMM_WORLD);
 
-    matrix_portion = NULL;
+    if (rank != i)
+      gaussian_elimination(matrix_portion, matrix, start_i, end_i, start_row, end_row, columns);
 
-    // double frees. how can i free the allocated matrix then? or will it clean up by going out of scope?
-    //free_matrix(matrix_portion, end_i - start_i);
+    free_contiguous_2d_double(matrix_portion);
   }
 
 }
@@ -185,10 +217,17 @@ void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row
     for (dest_row = dest_row_start; dest_row < dest_row_end; dest_row++) {
       if (src_matrix == dest_matrix && dest_row == src_row) continue;
 
-      pivot = dest_matrix[dest_row - dest_row_start][src_row] / src_matrix[src_row - src_row_start][src_row];
+      double numerator = dest_matrix[dest_row - dest_row_start][src_row];
+      double denominator = src_matrix[src_row - src_row_start][src_row];
+      if (numerator == 0 || denominator == 0) continue;
+      
+      pivot = numerator / denominator;
+      printf("%lf / %lf = %lf\n", numerator, denominator, pivot);
       for (column = src_row; column < columns; column++) {
         dest_matrix[dest_row - dest_row_start][column] = dest_matrix[dest_row - dest_row_start][column] - pivot * src_matrix[src_row - src_row_start][column];
+	printf("%lf ", dest_matrix[dest_row - dest_row_start][column]);
       }
+      printf("\n");
     }
   }
 }
