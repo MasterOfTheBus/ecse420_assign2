@@ -105,7 +105,7 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
   for (i = 0; i < rows; i++) {
     int j;
     double bcast_row[columns];
-    //    double** gather_recv = allocate_contiguous_2d_double(rows, columns);
+    
     if (rank == 0) {
       for (j = 0; j < columns; j++) {
         bcast_row[j] = matrix[i][j];
@@ -118,6 +118,15 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
                  MPI_COMM_WORLD);
 
     gaussian_elimination(reduce_rows, *start_row, *end_row, columns, bcast_row, i);
+
+    // do back substitution if the last iteration
+    if (i == rows - 1) {
+      for (j = *end_row-1; j >= *start_row; j--) {
+        int j_offset = j - *start_row;
+	reduce_rows[j_offset][columns-1] = reduce_rows[j_offset][columns-1] / reduce_rows[j_offset][j];
+	reduce_rows[j_offset][j] = 1;
+      }
+    }
 
     MPI_Gatherv(&(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, &(matrix[0][0]),
                 scatter_array, displ_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
@@ -133,11 +142,11 @@ void gaussian_elimination(double** matrix_portion, int start_row, int end_row, i
   double pivot;
   for (dest_row = start_row; dest_row < end_row; dest_row++) {
     if (dest_row == pivot_row_num) continue;
-
-    pivot = matrix_portion[dest_row - start_row][pivot_row_num] / pivot_row[pivot_row_num];
+    int dest_row_offset = dest_row - start_row;
+    pivot = matrix_portion[dest_row_offset][pivot_row_num] / pivot_row[pivot_row_num];
 
     for (column = 0; column < columns; column++) {
-      matrix_portion[dest_row - start_row][column] = matrix_portion[dest_row - start_row][column] - pivot * pivot_row[column];
+      matrix_portion[dest_row_offset][column] = matrix_portion[dest_row_offset][column] - pivot * pivot_row[column];
     }
   }
 }
