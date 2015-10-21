@@ -8,7 +8,9 @@ double** allocate_contiguous_2d_double(int rows, int columns);
 void free_contiguous_2d_double(double** array);
 void gaussian_elimination(double** matrix_portion, int start_row, int end_row, int columns, double* pivot_row,
 			  int pivot_row_num);
-void RREF(double** matrix, int rows, int columns, int rank, int size, int *start_row, int *end_row);
+void RREF_write_cp(double** matrix, int rows, int columns, int rank, int size, int *start_row, int *end_row,
+		   double* cp);
+void divide_by_max(double** reduce_rows, int rank_rows, int columns, int max);
 void print_matrix(double** matrix, int rows, int columns);
 double** read_user_matrix_from_file(char* filename, int* rows, int* columns);
 
@@ -40,13 +42,24 @@ int main(int argc, char* argv[]) {
     matrix = allocate_contiguous_2d_double(rows, columns);
   }
 
-  RREF(matrix, rows, columns, rank, size, &start_row, &end_row);
+  double cp[rows];
+
+  // RREF will also divide by max to make things easier, if not clean in the code
+  RREF_write_cp(matrix, rows, columns, rank, size, &start_row, &end_row, cp);
 
   if (rank == 0) {
     printf("\n");
     print_matrix(matrix, rows, columns);
+
+    printf("\n");
+    int j;
+    for (j = 0; j < rows; j++) {
+      printf("%lf ", cp[j]);
+    }
+    printf("\n");
   }
 
+  // some cleanup
   if (rank == 0)
     free_contiguous_2d_double(matrix);
     
@@ -92,12 +105,16 @@ void free_contiguous_2d_double(double** matrix) {
 }
 
 /*
-    The strategy is to use a broadcast to inform the other processes of the rows
+    The strategy is to use a broadcast the pivot row and then scatter the matrix
+    Will also perform the max, division, and writing to cp because the work is already parallelized
 */
-void RREF(double** matrix, int rows, int columns, int rank, int size, int *start_row, int *end_row) {
+void RREF_write_cp(double** matrix, int rows, int columns, int rank, int size, int *start_row, int *end_row,
+		   double* cp) {
   int i;
   int scatter_array[size];
   int displ_array[size];
+  int gather_array[size];
+  int gather_displ_array[size];
   double** reduce_rows;
 
   if (rank < rows) {
@@ -115,6 +132,9 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
       get_start_end_for_rank(i, size, rows, &start_temp, &end_temp);
       scatter_array[i] = (end_temp - start_temp) * columns;
       displ_array[i] = start_temp * columns;
+
+      gather_array[i] = end_temp - start_temp;
+      gather_displ_array[i] = start_temp;
       if (i == rank) {
         *start_row = start_temp;
         *end_row = end_temp;
@@ -161,14 +181,22 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
 printf("max %lf\n", final_max);
 
 	// divide by the max
-	int rows = *end_row - *start_row;
-	for (j = 0; j < rows; j++) {
-	  if (max >= -0.0000001 && max <= 0.0000001) {
-	    reduce_rows[j][columns-1] = 0;
-	  } else {
-	    reduce_rows[j][columns-1] = fabs(reduce_rows[j][columns-1]) / final_max;
-	  }
+	int rank_rows = *end_row - *start_row;
+        for (j = 0; j < rank_rows; j++) {
+          if (final_max >= -0.0000001 && final_max <= 0.0000001) {
+            reduce_rows[j][columns-1] = 0;
+          } else {
+            reduce_rows[j][columns-1] = fabs(reduce_rows[j][columns-1]) / final_max;
+          }
+        }
+
+	// store into cp
+	double cp_gather[rank_rows];
+	for (j = 0; j < rank_rows; j++) {
+	  cp_gather[j] = reduce_rows[j][columns-1];
 	}
+	MPI_Gatherv(cp_gather, gather_array[rank], MPI_DOUBLE, &(cp[0]), gather_array, gather_displ_array,
+		    MPI_DOUBLE, 0, MPI_COMM_WORLD);
       }
 
     }
@@ -195,6 +223,17 @@ void gaussian_elimination(double** matrix_portion, int start_row, int end_row, i
 
     for (column = 0; column < columns; column++) {
       matrix_portion[dest_row_offset][column] = matrix_portion[dest_row_offset][column] - pivot * pivot_row[column];
+    }
+  }
+}
+
+void divide_by_max(double** reduce_rows, int rank_rows, int columns, int final_max) {
+ int j;
+   for (j = 0; j < rank_rows; j++) {
+    if (final_max >= -0.0000001 && final_max <= 0.0000001) {
+      reduce_rows[j][columns-1] = 0;
+    } else {
+      reduce_rows[j][columns-1] = fabs(reduce_rows[j][columns-1]) / final_max;
     }
   }
 }
