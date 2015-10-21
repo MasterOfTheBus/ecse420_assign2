@@ -2,6 +2,10 @@
 #include <stdlib.h>
 #include <mpi.h>
 #include <math.h>
+#include <sys/time.h>
+
+#define TESTING 0
+#define GET_RUNTIME 0
 
 void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row);
 double** allocate_contiguous_2d_double(int rows, int columns);
@@ -16,6 +20,8 @@ void print_matrix(double** matrix, int rows, int columns);
 double** read_user_matrix_from_file(char* filename, int* rows, int* columns);
 
 int main(int argc, char* argv[]) {
+  // TODO: stopwatch for sequential starts here
+  struct timeval start_total, end_total, start_p, end_p;
 
   if (argc != 2) {
     printf("Usage: mpirun -np <number of processes> ./cp_mpi <path to text file of matrix>\n");
@@ -32,7 +38,16 @@ int main(int argc, char* argv[]) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   if (rank == 0) {
+#if GET_RUNTIME
+    gettimeofday(&start_total, NULL);
+#endif
+
     matrix = read_user_matrix_from_file(argv[1], &rows, &columns);
+
+#if GET_RUNTIME
+    // TODO: stopwatch for parallel starts here
+    gettimeofday(&start_p, NULL);
+#endif
   }
 
   // broadcast the column info
@@ -48,6 +63,7 @@ int main(int argc, char* argv[]) {
   // RREF will also divide by max to make things easier, if not clean in the code
   RREF_write_cp(matrix, rows, columns, rank, size, &start_row, &end_row, cp);
 
+#if TESTING
   if (rank == 0) {
     printf("\n");
     print_matrix(matrix, rows, columns);
@@ -59,16 +75,33 @@ int main(int argc, char* argv[]) {
     }
     printf("\n");
   }
-
-  write_cp_to_file(cp, rows);
+#endif
 
   // some cleanup
-  if (rank == 0)
+  if (rank == 0) {
+#if GET_RUNTIME
+    // TODO: stopwatch for parallel ends here
+    gettimeofday(&end_p, NULL);
+#endif
+
+    write_cp_to_file(cp, rows);
     free_contiguous_2d_double(matrix);
+  }
     
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Finalize();
+
+#if GET_RUNTIME
+  // TODO: stopwatch for sequential ends here
+  if (rank == 0) {
+    gettimeofday(&end_total, NULL);
+    printf("\n\nAlgorithm's parallel runtime: %ld\n",
+	((end_p.tv_sec * 1000000 + end_p.tv_usec) - (start_p.tv_sec * 1000000 + start_p.tv_usec)));
+    printf("Algorithm's total runtime: %ld\n",
+	((end_total.tv_sec * 1000000 + end_total.tv_usec) - (start_total.tv_sec * 1000000 + start_total.tv_usec)));
+  }
+#endif
 
   return 0;
 }
@@ -183,21 +216,48 @@ void RREF_write_cp(double** matrix, int rows, int columns, int rank, int size, i
 
 	// divide by the max
 	int rank_rows = *end_row - *start_row;
+	double cp_gather[rank_rows];
+	double thresholds[] = {0.2, 0.4, 0.6, 0.8, 1.0};
+	double expected_profit_partial[] = {0, 0, 0, 0, 0};
+	double expected_profit[5];
+
         for (j = 0; j < rank_rows; j++) {
           if (final_max >= -0.0000001 && final_max <= 0.0000001) {
             reduce_rows[j][columns-1] = 0;
           } else {
             reduce_rows[j][columns-1] = fabs(reduce_rows[j][columns-1]) / final_max;
           }
+
+	  // store into cp
+	  cp_gather[j] = reduce_rows[j][columns-1];
         }
 
-	// store into cp
-	double cp_gather[rank_rows];
-	for (j = 0; j < rank_rows; j++) {
-	  cp_gather[j] = reduce_rows[j][columns-1];
-	}
 	MPI_Gatherv(cp_gather, gather_array[rank], MPI_DOUBLE, &(cp[0]), gather_array, gather_displ_array,
 		    MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+	for (j = 0; j < 5; j++) {
+	  int k;
+	  for (k = 0; k < rank_rows; k++) {
+	    // add up all expected profit above the threshold
+	    if (cp_gather[k] > thresholds[j]) {
+	      expected_profit_partial[j] += (cp_gather[k] - 2 * (1 - cp_gather[k]));
+	    }
+	  }
+	}
+
+	MPI_Reduce(expected_profit_partial, expected_profit, 5, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+
+	if (rank == 0) {
+	  double max = 0.0;
+	  int index_max = 0;
+	  for (j = 0; j < 5; j++) {
+	    if (expected_profit[j] > max) {
+		max = expected_profit[j];
+		index_max = j;
+	    }
+	  }
+	  printf("%lf\n", thresholds[index_max]);
+	}
       }
 
     }
