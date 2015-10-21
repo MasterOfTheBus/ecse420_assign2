@@ -35,20 +35,24 @@ int main(int argc, char* argv[]) {
   MPI_Bcast(&columns, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-  if (rank != 0) {
-    matrix = allocate_contiguous_2d_double(rows, columns);
+  if (rank < rows) {
+    if (rank != 0) {
+      matrix = allocate_contiguous_2d_double(rows, columns);
+    }
+
+    RREF(matrix, rows, columns, rank, size, &start_row, &end_row);
+
+    if (rank == 0) {
+      printf("\n");
+      print_matrix(matrix, rows, columns);
+    }
+
+    if (rank == 0)
+      free_contiguous_2d_double(matrix);
+    
   }
 
-  RREF(matrix, rows, columns, rank, size, &start_row, &end_row);
-
-  if (rank == 0) {
-    printf("\n");
-    print_matrix(matrix, rows, columns);
-  }
-
-
-  if (rank == 0)
-    free_contiguous_2d_double(matrix);
+  MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Finalize();
 
@@ -56,9 +60,19 @@ int main(int argc, char* argv[]) {
 }
 
 void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row) {
-  *start_row = rows / size * rank;
-  *end_row = rows / size * (rank + 1); 
-  if (rank == size - 1) *end_row += rows % size;
+  if (rows < size) {
+    if (rank < rows) {
+      *start_row = rank;
+      *end_row = rank + 1;
+    } else {
+      *start_row = -1;
+      *end_row = -1;
+    }
+  } else {
+    *start_row = rows / size * rank;
+    *end_row = rows / size * (rank + 1); 
+    if (rank == size - 1) *end_row += rows % size;
+  }
 }
 
 // passing multidimensional arrays through mpi requires the data to be contiguous
@@ -83,10 +97,18 @@ void free_contiguous_2d_double(double** matrix) {
     The strategy is to use a broadcast to inform the other processes of the rows
 */
 void RREF(double** matrix, int rows, int columns, int rank, int size, int *start_row, int *end_row) {
+  int array_elements = (size > rows) ? rows : size;
   int scatter_array[size];
   int displ_array[size];
 
   // determine the portion of the matrix to take
+  /*
+  int rows_temp = rows;
+  int index = 0;
+  while (rows_temp > 0) {
+
+  }*/
+
   int i;
   for (i = 0; i < size; i++) {
     int start_temp, end_temp;
@@ -96,6 +118,8 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
     if (i == rank) {
       *start_row = start_temp;
       *end_row = end_temp;
+
+      printf("rank %d, start %d, end %d\n", rank, *start_row, *end_row);
     }
   }
 
@@ -128,8 +152,16 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
       }
     }
 
+    //MPI_Barrier(MPI_COMM_WORLD);
+
     MPI_Gatherv(&(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, &(matrix[0][0]),
                 scatter_array, displ_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+/*
+if (rank == 0) {
+printf("\n");
+print_matrix(matrix, rows, columns);
+}
+*/
 
   }
 
