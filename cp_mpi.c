@@ -11,6 +11,7 @@ void gaussian_elimination(double** matrix_portion, int start_row, int end_row, i
 void RREF_write_cp(double** matrix, int rows, int columns, int rank, int size, int *start_row, int *end_row,
 		   double* cp);
 void divide_by_max(double** reduce_rows, int rank_rows, int columns, int max);
+void write_cp_to_file(double* cp, int rows);
 void print_matrix(double** matrix, int rows, int columns);
 double** read_user_matrix_from_file(char* filename, int* rows, int* columns);
 
@@ -58,6 +59,8 @@ int main(int argc, char* argv[]) {
     }
     printf("\n");
   }
+
+  write_cp_to_file(cp, rows);
 
   // some cleanup
   if (rank == 0)
@@ -178,8 +181,6 @@ void RREF_write_cp(double** matrix, int rows, int columns, int rank, int size, i
 
 	MPI_Allreduce(&max, &final_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
 
-printf("max %lf\n", final_max);
-
 	// divide by the max
 	int rank_rows = *end_row - *start_row;
         for (j = 0; j < rank_rows; j++) {
@@ -247,6 +248,18 @@ void print_matrix(double** matrix, int rows, int columns) {
     }
     printf("\n");
   }
+}
+
+void write_cp_to_file(double *cp, int rows) {
+  /* write clicking probabilities to file */ 
+  FILE *output_file;
+  int row;
+  output_file = fopen("clicking_probabilities.txt","w");
+  for (row = 0; row < rows; row++) {
+    fprintf(output_file, "%lf\n", cp[row]);
+  }
+
+  fclose(output_file);
 }
 
 double ** read_user_matrix_from_file(char *filename, int *rows, int *columns) {
