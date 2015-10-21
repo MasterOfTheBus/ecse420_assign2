@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <mpi.h>
+#include <math.h>
 
 void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row);
 double** allocate_contiguous_2d_double(int rows, int columns);
@@ -102,6 +103,7 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
   if (rank < rows) {
   // determine the portion of the matrix to take
   /*
+  // TODO: would be nice to allocate the rows per process more evenly
   int rows_temp = rows;
   int index = 0;
   while (rows_temp > 0) {
@@ -123,7 +125,8 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
     reduce_rows = allocate_contiguous_2d_double(*end_row - *start_row, columns);
   }
 
-
+  double max = 0;
+  double final_max;
   for (i = 0; i < rows; i++) {
     if (rank < rows) {
       int j;
@@ -148,22 +151,31 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
           int j_offset = j - *start_row;
 	  reduce_rows[j_offset][columns-1] = reduce_rows[j_offset][columns-1] / reduce_rows[j_offset][j];
 	  reduce_rows[j_offset][j] = 1;
+
+	  // get the max
+	  if (max < fabs(reduce_rows[j_offset][columns-1])) max = fabs(reduce_rows[j_offset][columns-1]);
         }
+
+	MPI_Allreduce(&max, &final_max, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+printf("max %lf\n", final_max);
+
+	// divide by the max
+	int rows = *end_row - *start_row;
+	for (j = 0; j < rows; j++) {
+	  if (max >= -0.0000001 && max <= 0.0000001) {
+	    reduce_rows[j][columns-1] = 0;
+	  } else {
+	    reduce_rows[j][columns-1] = fabs(reduce_rows[j][columns-1]) / final_max;
+	  }
+	}
       }
 
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
     if (rank < rows) {
       MPI_Gatherv(&(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, &(matrix[0][0]),
                   scatter_array, displ_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-/*
-if (rank == 0) {
-printf("\n");
-print_matrix(matrix, rows, columns);
-}
-*/
     }
   }
 
