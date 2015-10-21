@@ -35,23 +35,20 @@ int main(int argc, char* argv[]) {
   MPI_Bcast(&columns, 1, MPI_INT, 0, MPI_COMM_WORLD);
   MPI_Bcast(&rows, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
-  if (rank < rows) {
-    if (rank != 0) {
-      matrix = allocate_contiguous_2d_double(rows, columns);
-    }
-
-    RREF(matrix, rows, columns, rank, size, &start_row, &end_row);
-
-    if (rank == 0) {
-      printf("\n");
-      print_matrix(matrix, rows, columns);
-    }
-
-    if (rank == 0)
-      free_contiguous_2d_double(matrix);
-    
+  if (rank != 0 && rank < rows) {
+    matrix = allocate_contiguous_2d_double(rows, columns);
   }
 
+  RREF(matrix, rows, columns, rank, size, &start_row, &end_row);
+
+  if (rank == 0) {
+    printf("\n");
+    print_matrix(matrix, rows, columns);
+  }
+
+  if (rank == 0)
+    free_contiguous_2d_double(matrix);
+    
   MPI_Barrier(MPI_COMM_WORLD);
 
   MPI_Finalize();
@@ -97,10 +94,12 @@ void free_contiguous_2d_double(double** matrix) {
     The strategy is to use a broadcast to inform the other processes of the rows
 */
 void RREF(double** matrix, int rows, int columns, int rank, int size, int *start_row, int *end_row) {
-  int array_elements = (size > rows) ? rows : size;
+  int i;
   int scatter_array[size];
   int displ_array[size];
+  double** reduce_rows;
 
+  if (rank < rows) {
   // determine the portion of the matrix to take
   /*
   int rows_temp = rows;
@@ -109,63 +108,68 @@ void RREF(double** matrix, int rows, int columns, int rank, int size, int *start
 
   }*/
 
-  int i;
-  for (i = 0; i < size; i++) {
-    int start_temp, end_temp;
-    get_start_end_for_rank(i, size, rows, &start_temp, &end_temp);
-    scatter_array[i] = (end_temp - start_temp) * columns;
-    displ_array[i] = i * (end_temp - start_temp) * columns;
-    if (i == rank) {
-      *start_row = start_temp;
-      *end_row = end_temp;
-
-      printf("rank %d, start %d, end %d\n", rank, *start_row, *end_row);
+    for (i = 0; i < size; i++) {
+      int start_temp, end_temp;
+      get_start_end_for_rank(i, size, rows, &start_temp, &end_temp);
+      scatter_array[i] = (end_temp - start_temp) * columns;
+      displ_array[i] = start_temp * columns;
+      if (i == rank) {
+        *start_row = start_temp;
+        *end_row = end_temp;
+      }
     }
+
+    // for each row, broadcast it, then scatter the rest of the matrix
+    reduce_rows = allocate_contiguous_2d_double(*end_row - *start_row, columns);
   }
 
-  // for each row, broadcast it, then scatter the rest of the matrix
-  double** reduce_rows = allocate_contiguous_2d_double(*end_row - *start_row, columns);
 
   for (i = 0; i < rows; i++) {
-    int j;
-    double bcast_row[columns];
+    if (rank < rows) {
+      int j;
+      double bcast_row[columns];
     
-    if (rank == 0) {
-      for (j = 0; j < columns; j++) {
-        bcast_row[j] = matrix[i][j];
+      if (rank == 0) {
+        for (j = 0; j < columns; j++) {
+          bcast_row[j] = matrix[i][j];
+        }
       }
-    }
-    MPI_Bcast(&bcast_row, columns, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+      MPI_Bcast(&bcast_row, columns, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    MPI_Scatterv(&(matrix[0][0]), scatter_array, displ_array, MPI_DOUBLE,
-                 &(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, 0,
-                 MPI_COMM_WORLD);
+      MPI_Scatterv(&(matrix[0][0]), scatter_array, displ_array, MPI_DOUBLE,
+                   &(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, 0,
+                   MPI_COMM_WORLD);
 
-    gaussian_elimination(reduce_rows, *start_row, *end_row, columns, bcast_row, i);
+      gaussian_elimination(reduce_rows, *start_row, *end_row, columns, bcast_row, i);
 
-    // do back substitution if the last iteration
-    if (i == rows - 1) {
-      for (j = *end_row-1; j >= *start_row; j--) {
-        int j_offset = j - *start_row;
-	reduce_rows[j_offset][columns-1] = reduce_rows[j_offset][columns-1] / reduce_rows[j_offset][j];
-	reduce_rows[j_offset][j] = 1;
+      // do back substitution if the last iteration
+      if (i == rows - 1) {
+        for (j = *end_row-1; j >= *start_row; j--) {
+          int j_offset = j - *start_row;
+	  reduce_rows[j_offset][columns-1] = reduce_rows[j_offset][columns-1] / reduce_rows[j_offset][j];
+	  reduce_rows[j_offset][j] = 1;
+        }
       }
+
     }
 
-    //MPI_Barrier(MPI_COMM_WORLD);
+    MPI_Barrier(MPI_COMM_WORLD);
 
-    MPI_Gatherv(&(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, &(matrix[0][0]),
-                scatter_array, displ_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    if (rank < rows) {
+      MPI_Gatherv(&(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, &(matrix[0][0]),
+                  scatter_array, displ_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 /*
 if (rank == 0) {
 printf("\n");
 print_matrix(matrix, rows, columns);
 }
 */
-
+    }
   }
 
-  free_contiguous_2d_double(reduce_rows);
+  if (rank < rows)
+    free_contiguous_2d_double(reduce_rows);
+
 }
 
 void gaussian_elimination(double** matrix_portion, int start_row, int end_row, int columns, double* pivot_row,
