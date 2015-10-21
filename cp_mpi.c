@@ -5,8 +5,14 @@
 void get_start_end_for_rank(int rank, int size, int rows, int* start_row, int* end_row);
 double** allocate_contiguous_2d_double(int rows, int columns);
 void free_contiguous_2d_double(double** array);
-void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row_start, int src_row_end,
-			  int dest_row_start, int dest_row_end, int columns);
+
+
+/*void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row_start, int src_row_end,
+			  int dest_row_start, int dest_row_end, int columns);*/
+void gaussian_elimination(double** matrix_portion, int start_row, int end_row, int columns, double* pivot_row,
+			  int pivot_row_num);
+
+
 void RREF(double** matrix, int start_row, int end_row, int rows, int columns, int rank, int size);
 void print_matrix(double** matrix, int rows, int columns);
 double** read_user_matrix_from_file(char* filename, int* rows, int* columns);
@@ -70,18 +76,13 @@ int main(int argc, char* argv[]) {
     }
     MPI_Bcast(&bcast_row, columns, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
-    /*MPI_Scatter(&(matrix[0][0]), 18, MPI_DOUBLE, reduce_rows, 18, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-
-    for (j = 0; j < 18; j++) {
-      printf("%lf ", reduce_rows[j]);
-    }
-    printf("\n");*/
-
     MPI_Scatterv(&(matrix[0][0]), scatter_array, displ_array, MPI_DOUBLE,
                  &(reduce_rows[0][0]), scatter_array[rank], MPI_DOUBLE, 0,
                  MPI_COMM_WORLD);
 
-    print_matrix(reduce_rows, end_row - start_row, columns);
+  //  print_matrix(reduce_rows, end_row - start_row, columns);
+
+    gaussian_elimination(reduce_rows, start_row, end_row, columns, bcast_row, i);
 
   //RREF(matrix, start_row, end_row, rows, columns, rank, size);
 
@@ -89,6 +90,11 @@ int main(int argc, char* argv[]) {
                 scatter_array, displ_array, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     //    free_contiguous_2d_double(gather_recv);
+
+    if (rank == 0) {
+      printf("\n");
+      print_matrix(matrix, rows, columns);
+    }
   }
 
   if (rank == 0) {
@@ -187,7 +193,7 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
     MPI_Bcast(&(matrix_portion[0][0]), end_i - start_i, MPI_DOUBLE, i, MPI_COMM_WORLD);
 
    // if (rank != i)
-      gaussian_elimination(matrix_portion, matrix, start_i, end_i, start_row, end_row, columns);
+      //gaussian_elimination(matrix_portion, matrix, start_i, end_i, start_row, end_row, columns);
 
     if (rank == 0) printf("\n\nprinting for iteration %d\n", i);
     MPI_Barrier(MPI_COMM_WORLD);
@@ -199,6 +205,22 @@ void RREF(double** matrix, int start_row, int end_row, int rows, int columns, in
 
 }
 
+void gaussian_elimination(double** matrix_portion, int start_row, int end_row, int columns, double* pivot_row,
+			  int pivot_row_num) {
+  int dest_row, column;
+  double pivot;
+  for (dest_row = start_row; dest_row < end_row; dest_row++) {
+    if (dest_row == pivot_row_num) continue;
+
+    pivot = matrix_portion[dest_row - start_row][pivot_row_num] / pivot_row[pivot_row_num];
+
+    for (column = 0; column < columns; column++) {
+      matrix_portion[dest_row - start_row][column] = matrix_portion[dest_row - start_row][column] - pivot * pivot_row[column];
+    }
+  }
+}
+
+/*
 void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row_start, int src_row_end,
 			  int dest_row_start, int dest_row_end, int columns) {
   int src_row, dest_row, column;
@@ -225,7 +247,7 @@ void gaussian_elimination(double** src_matrix, double** dest_matrix, int src_row
       }
     }
   }
-}
+}*/
 
 void print_matrix(double** matrix, int rows, int columns) {
   int i;
